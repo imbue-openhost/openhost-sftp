@@ -24,20 +24,17 @@ PERSIST="${OPENHOST_APP_DATA_DIR:-/data}"
 #                             CHANGED" warnings after a rebuild.
 #   authorized_keys         — the public keys allowed to log in.
 #                             Edited by the web frontend.
-#   sftp/                   — the chroot the SFTP user lands in.
-#                             ChrootDirectory in sshd_config points
-#                             here.  Owned by root; the writable
-#                             subdir below is where files land.
-#   sftp/files/             — the actual writable directory the
-#                             owner uploads into.  Owned by the
-#                             owner uid.
+#   home/                   — owner's writable home dir.  Where SSH
+#                             and SFTP sessions land by default.
+#                             Files put here via rsync/sftp/scp
+#                             are persisted; sessions started via
+#                             ssh start their cwd here.
 
 HOST_KEY_DIR="$PERSIST/sshd-host-keys"
 AUTHORIZED_KEYS="$PERSIST/authorized_keys"
-SFTP_CHROOT="$PERSIST/sftp"
-SFTP_FILES="$SFTP_CHROOT/files"
+OWNER_HOME="$PERSIST/home"
 
-mkdir -p "$HOST_KEY_DIR" "$SFTP_CHROOT" "$SFTP_FILES"
+mkdir -p "$HOST_KEY_DIR" "$OWNER_HOME"
 touch "$AUTHORIZED_KEYS"
 chmod 600 "$AUTHORIZED_KEYS"
 
@@ -63,10 +60,14 @@ if ! getent group owner >/dev/null 2>&1; then
     groupadd --gid "$PGID" owner 2>/dev/null || true
 fi
 if ! getent passwd owner >/dev/null 2>&1; then
+    # /bin/bash as the shell so SSH login lands the user in an
+    # interactive shell.  Home is the persistent OWNER_HOME so
+    # any files dropped there via SFTP / rsync survive
+    # container rebuilds.
     useradd --uid "$PUID" --gid "$PGID" \
             --no-create-home \
-            --home-dir "$SFTP_CHROOT" \
-            --shell /usr/sbin/nologin \
+            --home-dir "$OWNER_HOME" \
+            --shell /bin/bash \
             owner 2>/dev/null || true
 fi
 
@@ -82,20 +83,14 @@ fi
 passwd -d owner >/dev/null 2>&1 || true
 
 # -----------------------------------------------------------------
-# Chroot ownership and permissions
+# Owner home + authorized_keys ownership
 # -----------------------------------------------------------------
 #
-# sshd refuses to chroot into a directory that is not owned by
-# root or that is writable by anyone other than root.  This is a
-# protection against privilege escalation paths through the
-# chroot.  So:
-#   * /data/sftp     must be root:root, mode 0755.
-#   * /data/sftp/files (inside the chroot) is owned by the owner
-#     uid, mode 0755 — that's where uploads land.
-chown root:root "$SFTP_CHROOT"
-chmod 0755 "$SFTP_CHROOT"
-chown "$PUID:$PGID" "$SFTP_FILES"
-chmod 0755 "$SFTP_FILES"
+# Owner needs a writable home dir so login shells and SFTP
+# sessions can chdir there cleanly.  The home dir lives under
+# the persistent app_data dir so uploads survive rebuilds.
+chown "$PUID:$PGID" "$OWNER_HOME"
+chmod 0755 "$OWNER_HOME"
 
 # authorized_keys must be owned by the user reading it (sshd is
 # strict about this) and not group/world writable.
@@ -150,7 +145,6 @@ SSHD_PID=$!
 
 echo "[start.sh] Starting frontend on container port 8080"
 export AUTHORIZED_KEYS_PATH="$AUTHORIZED_KEYS"
-export SFTP_FILES_DIR="$SFTP_FILES"
 export FLASK_PORT="${FLASK_PORT:-8080}"
 python3 /opt/openhost-sftp/frontend.py &
 FRONTEND_PID=$!

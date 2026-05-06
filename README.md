@@ -17,18 +17,24 @@ The intended use case is "I want a place to drop files on my zone, accessed over
 4. From your laptop:
 
 ```sh
+# interactive shell inside the container
+ssh -p 9107 owner@<your-zone>
+
+# one-off remote command
+ssh -p 9107 owner@<your-zone> du -sh /data/app_data/sftp
+
+# file transfer
 sftp -P 9107 owner@<your-zone>
-# or
-rsync -e "ssh -p 9107" -avz ~/local-dir/ owner@<your-zone>:files/
+rsync -e "ssh -p 9107" -avz ~/local-dir/ owner@<your-zone>:
 ```
 
-Files land in `$OPENHOST_APP_DATA_DIR/sftp/files/` inside the container, persisted across container restarts.
+Files dropped via SFTP / `rsync` / `scp` land in the `owner` user's home directory (`$OPENHOST_APP_DATA_DIR/home/` inside the container), persisted across container restarts.
 
 ## How auth works
 
 - **Web UI**: gated entirely by OpenHost's router. Anyone without a valid `zone_auth` cookie is 302'd to `/login` on the parent zone before reaching this app. The frontend itself does no auth verification — it trusts that anyone reaching it is the zone owner. Same pattern as `openhost-minio`.
-- **SFTP**: standard SSH public-key auth, scoped to the single user `owner`. Password auth is disabled; root login is disabled. Each successful auth is forced into the SFTP subsystem (no shell, no port forwarding, no agent forwarding, no X11 forwarding, no tunneling).
-- **Chroot**: the `owner` user lands in `$OPENHOST_APP_DATA_DIR/sftp/` (a chrooted filesystem view) and can only reach files inside that directory.
+- **SSH / SFTP**: standard SSH public-key auth, scoped to the single user `owner`. Password auth is disabled; root login is disabled. Beyond auth, the user gets a normal interactive shell and full filesystem access inside the container — they can `ssh`, `sftp`, `scp`, `rsync`, run remote commands, etc. The container's own isolation (cap-drop=ALL plus a tight default capability set) bounds what the shell can do; in particular it can't escape to the host or read other apps' data.
+- **No chroot.** The earlier version of this package used `ChrootDirectory` to confine SFTP sessions to a sub-tree, but enabling shell access made the chroot-vs-shell story inconsistent. The shell version (current) lets the owner roam the container's filesystem freely; the cap-drop and read-only image layers handle the rest.
 
 ## How to revoke access
 
@@ -58,12 +64,11 @@ $OPENHOST_APP_DATA_DIR/
                                    # the web frontend, read by sshd
   authorized_keys.meta.json        # sidecar tracking added_at timestamps
                                    # for the UI; safe to lose
-  sftp/                            # the SFTP chroot — owned by root,
-                                   # mode 0755 (sshd refuses to chroot
-                                   # into a non-root-owned dir)
-    files/                         # the writable subdir inside the
-                                   # chroot — owned by `owner`; this is
-                                   # where uploads land
+  home/                            # the owner user's home directory.
+                                   # SSH and SFTP sessions land here.
+                                   # Owned by owner uid/gid; mode 0755.
+                                   # Files dropped here via rsync/sftp
+                                   # are persisted across rebuilds.
 ```
 
 ## Why a separate app?
@@ -75,24 +80,26 @@ Each existing OpenHost app handles "encrypted file transfer" differently:
 | `openhost-syncthing` | TLS | Device pairing | Filesystem | Continuous sync between paired devices |
 | `openhost-minio` | (HTTP today; HTTPS doable) | S3 access keys | Object store | Bucket-shaped storage with S3 client tooling |
 | `openhost-nextcloud` | HTTPS via Caddy | OpenHost SSO + WebDAV app passwords | Filesystem | "I want everything Nextcloud has" |
-| `openhost-sftp` (this) | SSH | SSH public keys | Filesystem (chrooted) | `rsync -e ssh` from cron, simplest possible "just drop files here" |
+| `openhost-sftp` (this) | SSH | SSH public keys | Filesystem | `rsync -e ssh` from cron, plus interactive shell access for debugging |
 
 If you don't need an SFTP-shaped target, you probably want one of the others.
 
 ## Hardening notes
 
-The sshd_config in this image is intentionally conservative:
+The sshd_config in this image is conservative for a shell-enabled SSH endpoint:
 
 - `PasswordAuthentication no`
 - `PermitRootLogin no`
 - `AllowUsers owner` (only one user can log in, regardless of `authorized_keys` contents)
-- `ForceCommand internal-sftp` (no shell, no scp via legacy command, no rsync-direct — but rsync over SFTP works because rsync uses SFTP subsystem when invoked with `-e ssh`)
-- `PermitTTY no`
-- `AllowTcpForwarding no`, `AllowStreamLocalForwarding no`, `PermitTunnel no`, `X11Forwarding no`, `GatewayPorts no`
-- `ChrootDirectory /data/sftp` — the user can't see anything outside their chroot
+- `AllowTcpForwarding no`, `AllowStreamLocalForwarding no`, `PermitTunnel no`, `X11Forwarding no`, `GatewayPorts no` — a stolen key can't use the container as a SOCKS proxy or X11 hop.
 - The frontend rejects key lines with OpenSSH "options" prefixes — auth capabilities are configured globally in sshd_config, not per-key, so accepting per-key options would silently re-enable things we deny.
 
-If you need to relax any of these (e.g. allow a shell for one user, or enable a SOCKS tunnel), edit `sshd_config` and rebuild. Don't try to do it via per-key `authorized_keys` options — the frontend will strip them.
+What's NOT restricted (deliberately):
+- Interactive shells. You can `ssh owner@host` to get a bash prompt.
+- Arbitrary commands. You can `ssh owner@host <command>`.
+- Filesystem access inside the container. The user can read/write anywhere their uid permits.
+
+If you want a stricter SFTP-only setup, re-enable `PermitTTY no`, add a `Match User owner` block with `ForceCommand internal-sftp` and `ChrootDirectory <path>` to sshd_config, and make `<path>` and its parents owned by root with mode 0755. The earlier (pre-shell-access) version of this repo had exactly that configuration; the git history preserves it.
 
 ## Limitations
 

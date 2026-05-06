@@ -59,14 +59,15 @@
     <p>The SSH/SFTP service listens at:</p>
     <pre>{{ ssh_user }}@{{ ssh_host }}, port {{ ssh_port }}</pre>
     <p style="margin-top:12px">Examples:</p>
-    <pre>sftp -P {{ ssh_port }} {{ ssh_user }}@{{ ssh_host }}
-rsync -e "ssh -p {{ ssh_port }}" -avz local/ {{ ssh_user }}@{{ ssh_host }}:files/
-ssh -p {{ ssh_port }} {{ ssh_user }}@{{ ssh_host }} </dev/null</pre>
+    <pre>ssh  -p {{ ssh_port }} {{ ssh_user }}@{{ ssh_host }}                        # interactive shell
+ssh  -p {{ ssh_port }} {{ ssh_user }}@{{ ssh_host }} du -sh ~                # one-off command
+sftp -P {{ ssh_port }} {{ ssh_user }}@{{ ssh_host }}
+rsync -e "ssh -p {{ ssh_port }}" -avz local/ {{ ssh_user }}@{{ ssh_host }}:</pre>
     <p class="subtle" style="margin-top:8px">
-      The third form (TTY-less <code>ssh</code>) is rejected by design —
-      <code>PermitTTY no</code> + <code>ForceCommand internal-sftp</code>
-      mean only the SFTP subsystem is available.  Files written via SFTP
-      land under the <code>files/</code> subdirectory inside your chroot.
+      Files dropped via SFTP / rsync / scp land in <code>{{ ssh_user }}</code>'s
+      home directory inside the container, persisted across restarts.
+      The user has shell access for debugging and one-off commands;
+      see the README for the hardening posture.
     </p>
   </div>
 
