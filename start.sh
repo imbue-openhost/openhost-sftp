@@ -107,8 +107,23 @@ chmod 644 "$HOST_KEY_DIR"/*.pub
 # -e: send logs to stderr (so they reach the OpenHost log pipeline).
 # -f: use our config (which references /data paths above).
 
-echo "[start.sh] Starting sshd on container port 22"
-/usr/sbin/sshd -D -e -f /opt/openhost-sftp/sshd_config &
+# -----------------------------------------------------------------
+# Render sshd_config with the real persist path
+# -----------------------------------------------------------------
+#
+# Compute_space mounts the per-app persistent dir at
+# /data/app_data/<app-name>/ inside the container, NOT at /data.
+# Our shipped sshd_config uses a __PERSIST__ placeholder for paths
+# (HostKey, AuthorizedKeysFile, ChrootDirectory) that we
+# substitute here with the real $PERSIST value before launching
+# sshd.  Writing the rendered config to /run (which is in-memory
+# tmpfs) keeps the on-disk image read-only-friendly.
+RENDERED_SSHD_CONFIG="/run/sshd_config"
+sed "s|__PERSIST__|$PERSIST|g" /opt/openhost-sftp/sshd_config > "$RENDERED_SSHD_CONFIG"
+chmod 0600 "$RENDERED_SSHD_CONFIG"
+
+echo "[start.sh] Starting sshd on container port 22 (config: $RENDERED_SSHD_CONFIG)"
+/usr/sbin/sshd -D -e -f "$RENDERED_SSHD_CONFIG" &
 SSHD_PID=$!
 
 # -----------------------------------------------------------------
