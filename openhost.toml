@@ -1,0 +1,55 @@
+[app]
+name = "sftp"
+version = "0.1.0"
+description = "SFTP server with an SSO-gated web UI for managing authorized SSH public keys.  Use it as a destination for rsync/sftp/rclone backup workflows; the wire encryption is plain SSH (so no extra TLS plumbing) and the auth model is just SSH keys (so no access-key/secret pair to leak in a config file)."
+
+[runtime.container]
+image = "Dockerfile"
+# Container port 8080 is the web frontend (Flask app) used to
+# manage authorized SSH public keys.  Operator-only; gated by
+# OpenHost SSO at the router layer (public_paths = []).
+port = 8080
+
+# SSH/SFTP service on container TCP/22, published to host port
+# 9107.  This is the port external clients connect to with
+# rsync / sftp / scp / rclone:
+#
+#   rsync -e "ssh -p 9107" -avz local/ owner@<zone>:remote/
+#
+# Auth on this surface is SSH-key-only (password auth disabled
+# in sshd_config); the keys are managed via the web frontend.
+[[ports]]
+label = "ssh"
+container_port = 22
+host_port = 9107
+
+[routing]
+# A trivially-cheap GET endpoint the OpenHost dashboard can probe
+# for "is this app healthy".  /health returns plaintext "ok" with
+# no auth required at the app level (the OpenHost router still
+# enforces SSO before forwarding, so it's effectively zone-owner
+# only — but the health probe is local to the host and doesn't
+# carry a JWT, so we'd need to opt this out of public_paths if we
+# wanted the router probe to work.  In practice the router
+# decides "running" based on the container's port being live, not
+# on the health endpoint, so this is documentation more than
+# anything.)
+health_check = "/health"
+# Frontend is operator-only.  Visitors without a valid zone_auth
+# cookie get 302'd to /login on the parent zone by the OpenHost
+# router before reaching us.  Same pattern openhost-minio uses.
+public_paths = []
+
+[resources]
+# The Flask frontend is essentially idle and serves a single
+# small admin page.  sshd's RAM use scales with the number of
+# concurrent connections; one or two SFTP clients at a time is
+# typical for a personal backup target.  256 MiB is comfortable.
+memory_mb = 256
+cpu_millicores = 250
+
+[data]
+# Persistent: the SFTP chroot directory (where uploaded files
+# live) AND the authorized_keys file the frontend writes.  Both
+# are under OPENHOST_APP_DATA_DIR.
+app_data = true

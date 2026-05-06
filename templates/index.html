@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>SFTP keys — OpenHost</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    /* Match OpenHost's dashboard look-and-feel: dark theme, readable
+       monospace for keys, a single column on mobile.  Lifted from the
+       vm-manager dashboard CSS so it feels native. */
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f1117; color: #e1e4e8; line-height: 1.5; }
+    a { color: #58a6ff; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace; font-size: 0.92em; }
+    pre { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 12px; overflow-x: auto; color: #c9d1d9; }
+    .container { max-width: 960px; margin: 0 auto; padding: 24px; }
+    h1 { font-size: 1.5em; margin-bottom: 8px; }
+    h2 { font-size: 1.15em; margin: 24px 0 12px 0; color: #c9d1d9; }
+    p, li { color: #c9d1d9; }
+    .subtle { color: #8b949e; font-size: 0.92em; }
+    .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+    input, textarea { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 8px 12px; color: #c9d1d9; width: 100%; font-size: 14px; font-family: inherit; }
+    textarea { min-height: 90px; font-family: ui-monospace, monospace; font-size: 13px; }
+    label { display: block; margin-bottom: 4px; font-weight: 500; color: #8b949e; font-size: 13px; }
+    .form-group { margin-bottom: 12px; }
+    .btn { display: inline-block; padding: 8px 16px; border-radius: 6px; border: 1px solid #30363d; background: #21262d; color: #c9d1d9; cursor: pointer; font-size: 14px; }
+    .btn:hover { background: #30363d; }
+    .btn-primary { background: #238636; border-color: #2ea043; color: #fff; }
+    .btn-primary:hover { background: #2ea043; }
+    .btn-danger { background: #21262d; border-color: #f85149; color: #f85149; }
+    .btn-danger:hover { background: #f85149; color: #fff; }
+    .btn-sm { padding: 4px 10px; font-size: 13px; }
+    .flash { padding: 10px 14px; border-radius: 6px; margin-bottom: 12px; border: 1px solid; }
+    .flash-error { background: #3d1f1f; border-color: #f85149; color: #f85149; }
+    .flash-warning { background: #2d2000; border-color: #d29922; color: #d29922; }
+    .flash-success { background: #1b4332; border-color: #2ea043; color: #2ea043; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid #30363d; }
+    th { color: #8b949e; font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+    .empty { color: #8b949e; font-style: italic; padding: 16px; }
+    .keytype { color: #8b949e; font-size: 0.85em; }
+    .fp { font-family: ui-monospace, monospace; font-size: 0.9em; word-break: break-all; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <h1>SFTP keys</h1>
+  <p class="subtle">SSO-gated admin UI for the keys allowed to log in to this zone's SFTP service.  Add public keys below; remove the ones you no longer need.</p>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, message in messages %}
+      <div class="flash flash-{{ category }}">{{ message }}</div>
+    {% endfor %}
+  {% endwith %}
+
+  <h2>Connection details</h2>
+  <div class="card">
+    <p>The SSH/SFTP service listens at:</p>
+    <pre>{{ ssh_user }}@{{ ssh_host }}, port {{ ssh_port }}</pre>
+    <p style="margin-top:12px">Examples:</p>
+    <pre>sftp -P {{ ssh_port }} {{ ssh_user }}@{{ ssh_host }}
+rsync -e "ssh -p {{ ssh_port }}" -avz local/ {{ ssh_user }}@{{ ssh_host }}:files/
+ssh -p {{ ssh_port }} {{ ssh_user }}@{{ ssh_host }} </dev/null</pre>
+    <p class="subtle" style="margin-top:8px">
+      The third form (TTY-less <code>ssh</code>) is rejected by design —
+      <code>PermitTTY no</code> + <code>ForceCommand internal-sftp</code>
+      mean only the SFTP subsystem is available.  Files written via SFTP
+      land under the <code>files/</code> subdirectory inside your chroot.
+    </p>
+  </div>
+
+  <h2>Authorized keys ({{ keys|length }} / {{ max_keys }})</h2>
+  <div class="card">
+    {% if keys %}
+      <table>
+        <thead>
+          <tr><th>Label</th><th>Type</th><th>Fingerprint</th><th>Added</th><th></th></tr>
+        </thead>
+        <tbody>
+          {% for k in keys %}
+            <tr>
+              <td>{{ k.comment }}</td>
+              <td><span class="keytype">{{ k.key_type }}</span></td>
+              <td class="fp">{{ k.fingerprint }}</td>
+              <td class="subtle">{{ k.added_at }}</td>
+              <td>
+                <form method="post" action="{{ url_for('delete_key') }}" style="display:inline" onsubmit="return confirm('Delete {{ k.comment }}?');">
+                  <input type="hidden" name="fingerprint" value="{{ k.fingerprint }}">
+                  <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+                </form>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="empty">No keys authorized yet.  Add one below to enable SFTP access.</p>
+    {% endif %}
+  </div>
+
+  <h2>Add a key</h2>
+  <div class="card">
+    <form method="post" action="{{ url_for('add_key') }}">
+      <div class="form-group">
+        <label for="key">Public key (one full line)</label>
+        <textarea name="key" id="key" placeholder="ssh-ed25519 AAAAC3Nz... user@host" required></textarea>
+        <p class="subtle" style="margin-top:4px">
+          Paste the full <code>ssh-ed25519 …</code> / <code>ssh-rsa …</code>
+          line from the key file (<code>~/.ssh/id_ed25519.pub</code> on
+          most laptops).  OpenSSH "options" prefixes are stripped on
+          input — auth policy is configured globally in sshd_config,
+          not per-key.
+        </p>
+      </div>
+      <div class="form-group">
+        <label for="label">Label (optional)</label>
+        <input type="text" name="label" id="label" placeholder="e.g. andrew-laptop">
+        <p class="subtle" style="margin-top:4px">
+          Short reminder of which device this key belongs to.  Replaces
+          the comment portion of the pasted key line if both are
+          present.
+        </p>
+      </div>
+      <button type="submit" class="btn btn-primary">Add key</button>
+    </form>
+  </div>
+</div>
+</body>
+</html>
