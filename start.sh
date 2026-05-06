@@ -63,6 +63,17 @@ if ! getent passwd owner >/dev/null 2>&1; then
             owner 2>/dev/null || true
 fi
 
+# Unlock the password field so sshd doesn't reject the account as
+# "locked".  By default useradd leaves the shadow entry as "!" which
+# sshd's UsePAM-aware checks treat as "this account cannot be used"
+# even though we never authenticate via password (PubkeyAuthentication
+# is the only enabled method).  We don't WANT a usable password — we
+# just want the account to not be flagged as locked.  ``passwd -d``
+# clears the shadow password field entirely; combined with
+# PasswordAuthentication=no in sshd_config that means the only path
+# in is the public-key one we want.
+passwd -d owner >/dev/null 2>&1 || true
+
 # -----------------------------------------------------------------
 # Chroot ownership and permissions
 # -----------------------------------------------------------------
