@@ -41,6 +41,13 @@ mkdir -p "$HOST_KEY_DIR" "$SFTP_CHROOT" "$SFTP_FILES"
 touch "$AUTHORIZED_KEYS"
 chmod 600 "$AUTHORIZED_KEYS"
 
+# sshd's StrictModes refuses an authorized_keys file whose containing
+# directory is group-writable.  compute_space mounts the persistent
+# data dir with 0775 perms by default; tighten to 0755 so sshd
+# accepts the key file.  The container's idmap means this only
+# affects what the container sees, not the host-side perms.
+chmod 0755 "$PERSIST"
+
 # -----------------------------------------------------------------
 # Owner user
 # -----------------------------------------------------------------
