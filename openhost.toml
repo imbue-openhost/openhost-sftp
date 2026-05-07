@@ -1,6 +1,6 @@
 [app]
 name = "sftp"
-version = "0.1.0"
+version = "0.2.0"
 description = "SFTP server with an SSO-gated web UI for managing authorized SSH public keys.  Use it as a destination for rsync/sftp/rclone backup workflows; the wire encryption is plain SSH (so no extra TLS plumbing) and the auth model is just SSH keys (so no access-key/secret pair to leak in a config file)."
 
 [runtime.container]
@@ -49,7 +49,19 @@ memory_mb = 256
 cpu_millicores = 250
 
 [data]
-# Persistent: the SFTP chroot directory (where uploaded files
-# live) AND the authorized_keys file the frontend writes.  Both
-# are under OPENHOST_APP_DATA_DIR.
+# Local-disk persistent storage at /data/app_data/sftp/ — sshd
+# host keys, authorized_keys, the owner user's home directory.
+# Anything that needs fsync semantics (configs, lockfiles) lives
+# here.
 app_data = true
+
+# Elastic S3-backed storage at /data/app_archive/sftp/ — bulk
+# content the operator drops via SFTP/rsync and doesn't want to
+# pay local-disk prices for: photo dumps, video offloads, full
+# laptop backups, etc.  The archive bind only appears once the
+# operator has configured the S3 archive backend on the zone;
+# until then, this app refuses to install.  When the bind is
+# present the SFTP user sees both /data/app_data/sftp/ and
+# /data/app_archive/sftp/ side-by-side under /data inside the
+# container, and can choose where to write.
+app_archive = true

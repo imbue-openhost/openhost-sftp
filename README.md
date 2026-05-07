@@ -30,6 +30,8 @@ rsync -e "ssh -p 9107" -avz ~/local-dir/ owner@<your-zone>:
 
 Files dropped via SFTP / `rsync` / `scp` land in the `owner` user's home directory (`$OPENHOST_APP_DATA_DIR/home/` inside the container), persisted across container restarts.
 
+The owner can also navigate to `/data/app_archive/sftp/` for bulk content that should live on the operator-configured S3 archive backend (videos, photo dumps, laptop backups). Both tiers appear as plain POSIX directories under `/data/`; the archive one is JuiceFS-backed when the operator has configured S3 storage. The app refuses to install until the archive backend is configured — see the OpenHost dashboard's System tab.
+
 ## How auth works
 
 - **Web UI**: gated entirely by OpenHost's router. Anyone without a valid `zone_auth` cookie is 302'd to `/login` on the parent zone before reaching this app. The frontend itself does no auth verification — it trusts that anyone reaching it is the zone owner. Same pattern as `openhost-minio`.
@@ -55,7 +57,8 @@ Sensible defaults; you don't need to set any of these in normal use.
 ## Filesystem layout (inside the container)
 
 ```
-$OPENHOST_APP_DATA_DIR/
+/data/app_data/sftp/               # local-disk persistent storage,
+                                   # injected as $OPENHOST_APP_DATA_DIR
   sshd-host-keys/                  # ssh host keys — generated on first
                                    # boot, persisted across restarts so
                                    # clients don't see "host identity
@@ -69,6 +72,14 @@ $OPENHOST_APP_DATA_DIR/
                                    # Owned by owner uid/gid; mode 0755.
                                    # Files dropped here via rsync/sftp
                                    # are persisted across rebuilds.
+
+/data/app_archive/sftp/            # elastic S3-backed storage (JuiceFS
+                                   # mount).  Drop bulk content here
+                                   # — video offloads, photo dumps,
+                                   # whole-laptop backups — that you
+                                   # don't want eating local-disk
+                                   # space.  Higher first-touch latency
+                                   # than app_data; same POSIX shape.
 ```
 
 ## Why a separate app?
