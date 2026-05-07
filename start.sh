@@ -9,14 +9,20 @@
 # pattern openhost-syncthing and openhost-minio use.
 set -euo pipefail
 
-# OpenHost mounts persistent storage at OPENHOST_APP_DATA_DIR.
-# In a real deploy this resolves to /data inside the container;
-# we fall back to /data so paths in sshd_config are stable.
+# OpenHost mounts the local-disk app_data tier at
+# OPENHOST_APP_DATA_DIR (= /data/app_data/sftp inside the
+# container) and the elastic S3-backed app_archive tier at
+# OPENHOST_APP_ARCHIVE_DIR (= /data/app_archive/sftp).  Both
+# fall back to sensible defaults when running outside compute_space
+# so paths in sshd_config remain stable.
 PERSIST="${OPENHOST_APP_DATA_DIR:-/data}"
+ARCHIVE="${OPENHOST_APP_ARCHIVE_DIR:-/data/app_archive/sftp}"
 
 # -----------------------------------------------------------------
-# Filesystem layout under PERSIST
+# Filesystem layout
 # -----------------------------------------------------------------
+#
+# Under $PERSIST (local disk, fast, fsync-honest):
 #
 #   sshd-host-keys/         — host keys generated on first boot.
 #                             Persisting these means clients don't
@@ -29,6 +35,14 @@ PERSIST="${OPENHOST_APP_DATA_DIR:-/data}"
 #                             Files put here via rsync/sftp/scp
 #                             are persisted; sessions started via
 #                             ssh start their cwd here.
+#
+# Under $ARCHIVE (S3-backed via JuiceFS, elastic, higher latency):
+#
+#                           — empty by default; the operator drops
+#                             bulk content (video offloads, photo
+#                             dumps, laptop backups) here over
+#                             SFTP/rsync.  No local-disk pressure;
+#                             higher first-touch latency.
 
 HOST_KEY_DIR="$PERSIST/sshd-host-keys"
 AUTHORIZED_KEYS="$PERSIST/authorized_keys"
@@ -96,6 +110,20 @@ chmod 0755 "$OWNER_HOME"
 # strict about this) and not group/world writable.
 chown "$PUID:$PGID" "$AUTHORIZED_KEYS"
 chmod 0600 "$AUTHORIZED_KEYS"
+
+# -----------------------------------------------------------------
+# Archive tier
+# -----------------------------------------------------------------
+#
+# The OpenHost archive tier (S3-backed via JuiceFS) is bind-mounted
+# at $ARCHIVE.  Set the ownership so the owner user can drop bulk
+# content here.  ``chown`` against a JuiceFS mount triggers a
+# metadata write; do it once at boot and tolerate failure (the
+# mount may not exist when running outside compute_space).
+if [[ -d "$ARCHIVE" ]]; then
+    chown "$PUID:$PGID" "$ARCHIVE" 2>/dev/null || true
+    chmod 0755 "$ARCHIVE" 2>/dev/null || true
+fi
 
 # -----------------------------------------------------------------
 # Host keys: generate on first boot, persist across rebuilds
